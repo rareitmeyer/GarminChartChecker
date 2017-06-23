@@ -1,0 +1,58 @@
+<script src="http://d3js.org/d3.v3.min.js"></script>
+<script type="text/javascript">
+
+// make sure Leaflet chart is float-left
+function set_leaflet_float()
+{
+    var old_style = d3.select('div.leaflet.html-widget').attr('style');
+    var new_style = old_style + 'float: left;'
+    d3.select('div.leaflet.html-widget').attr('style', new_style);
+    console.log('set style on leaflet div ' + d3.select('div.leaflet.html-widget').size())
+
+}
+
+function new_marker_src(idx, size, color)
+{
+    d3.selectAll('.'+delete_marker_classes[idx])
+        .attr('src', 'icons/'+size+'_'+color+'_x_31x31.png')
+    d3.selectAll('.'+add_marker_classes[idx])
+        .attr('src', 'icons/'+size+'_'+color+'_circle_31x31.png')
+}
+
+function range_moved()
+{
+    var small_x_src = 'icons/small_blue_x_31x31\.png';
+    var big_x_src = 'icons/big_blue_x_31x31\.png';
+    var small_circle_src = 'icons/small_blue_circle_31x31\.png';
+    var big_circle_src = 'icons/big_blue_circle_31x31\.png';
+
+
+    var display = d3.select("#lnm_published_display");
+    var slider = d3.select("#lnm_published_slider");
+    var idx = parseInt(slider.property("value"));
+    if (idx == old_published_date_idx) {
+        return;
+    }
+
+    if (idx < published_dates.length) {
+        display.text(published_dates[idx]);
+    } else {
+        display.text('latest');
+    }
+
+    // update all objects with class between old_published_date_idx and idx.
+    if (idx > old_published_date_idx) {
+	new_marker_src(idx, 'big', 'green');
+	for (i = old_published_date_idx; i < idx; ++i) {
+   	    new_marker_src(i, 'big', 'blue');
+	}
+    } else {
+	new_marker_src(idx, 'big', 'green');
+	for (i = idx+1; i <= old_published_date_idx; ++i) {
+   	    new_marker_src(i, 'small', 'blue');
+	}
+    }
+    old_published_date_idx = idx;
+}
+
+</script>

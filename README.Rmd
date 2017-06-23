@@ -1,0 +1,185 @@
+---
+title: "Garmin Chart Checker"
+author: "R. A. Reitmeyer"
+date: "2017-06-16"
+output:
+  html_document:
+    includes:
+      in_header: header.html
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Motivation
+
+I crew on a racing sailboat in the San Francisco Bay, and the boat's owner
+just bought an expensive brand-new Garmin GPS. And paid for the latest
+charts (maps).
+
+But at least in some areas, the charts look more like the 20
+year old chart on my wall than the current NOAA charts.
+For example, Berkeley harbor re-arranged the docks more than
+a decade ago, and the Garmin chart shows the old configuration,
+not current one.
+
+It would be nice to figure out exactly what date the Garmin charts
+reflect, perhaps by looking at NOAA chart-changes and comparing those
+with the Garmin.  But since I don't know all the changes to bay area
+charts and when they happened, and reading weekly archived PDFs of
+the LNMs (local notice to mariners) for the last ~10 years seemed
+tedious, I've made this tool for looking at prominent changes to
+San Francisco Bay charts since 2000, based on coast guard LNMs for
+these four charts:
+
+
+* 18650 - San Francisco Bay Candlestick Point to Angel Island - US5CA13M
+* 18651 - San Francisco Bay-southern part;Redwood Creek.;Oyster Point - US5CA16M
+* 18653 - San Francisco Bay-Angel Island to Point San Pedro - US5CA21M
+* 18654 - San Pablo Bay - US5CA31M
+
+The focus on simple 'add' and 'delete' changes means that when
+something moves, like Bay Bridge mooring balls, the prior 'add'
+shows in the wrong place.
+
+But it should be helpful for seeing year-week dates of changes, and
+locating them on a chart.
+
+Credits: leaflet and D3 for nice Javascript libraries, NOAA for
+the base charts, and NOAA again for the LNM data.
+
+
+# Chart
+
+```{r echo=FALSE}
+library(leaflet)
+library(jsonlite)
+library(stringr)
+
+chart_changes <- c('18650_nm.txt', '18651_nm.txt', '18653_nm.txt', '18654_nm.txt')
+chart_changes <- '18653_nm.txt'
+
+# grab data from R
+load_data_R <- function() {
+    data <- do.call(rbind, lapply(chart_changes, function(change) {
+        read.table(change, header=FALSE, sep='\t',
+                   col.names=c('chart', 'action', 'item_name', 'chart_label', 'lat', 'lon', 'latdd', 'londd', 'published', 'kapp', 'rnc_panel', 'rnc_posted'),
+                   skip=2, quote='', fill=TRUE,
+                   stringsAsFactors=FALSE)
+    }))[,c('chart','action','item','label','lat','lng','published')]
+    data$action <- tolower(data$action)
+    data$published <- as.character(data$published)
+    published_matches <- stringr::str_match(data$published, 'LNM ([0-9][0-9])/([0-9][0-9]), 11th Dist')
+    data$effective <- apply(
+        published_matches, 1,
+        function(x) {
+            if (!is.na(x[1]) && (x[3] <= strftime(Sys.time(), '%y'))) {
+                sprintf("20%sw%s", x[3], x[2])
+            } else {
+                NA
+            }
+        }
+    )
+    data <- subset(data, !is.na(effective))
+    return (data)
+}
+
+# use data that was downloaded and processed in python
+load_data_python <- function()
+{
+    data <- read.csv('lnms_best.csv')
+    return (data)
+}
+
+data <- load_data_python()
+#full_data <- data
+#small_data <- subset(data, published %in% c('2011w08', '2011w19', '2011w32'))
+#small_data$latdd <- jitter(small_data$lat, 0.01)
+#small_data$londd <- jitter(small_data$lng, 0.01)
+#data <- small_data
+
+data$is_note <- grepl('(NOTE .*)|(NOTE)$', data$item, ignore.case=TRUE)
+data$is_note <- data$is_note | grepl('Tabulation', data$item, ignore.case=TRUE)
+data$is_add <- data$action=='add'
+data$is_delete <- data$action=='delete'
+```
+
+```{r asis=TRUE, echo=FALSE}
+library(htmltools)
+
+published_dates <- unique(data$effective)
+published_dates <- published_dates[order(published_dates)]
+js_published_array <- paste(published_dates, collapse="','")
+js_add_classes_array <- paste(sprintf("marker_add_%s", published_dates), collapse="','")
+js_delete_classes_array <- paste(sprintf("marker_delete_%s", published_dates), collapse="','")
+html <- sprintf(("
+<script type='text/javascript'>
+var published_dates = ['%s'];
+var add_marker_classes = ['%s'];
+var delete_marker_classes = ['%s'];
+var old_published_date_idx = %d;
+</script>
+<div class='datecontrol'>
+<p id='lnm_published_display' class='dt'>%s</p>
+<input id='lnm_published_slider' type='range'
+min=0 max=%d value=%d oninput='range_moved();'>
+</div>
+"), js_published_array, js_add_classes_array, js_delete_classes_array, length(published_dates), 'latest', length(published_dates), length(published_dates))
+knitr::asis_output(htmltools::htmlPreserve(html))
+```
+
+```{r echo=FALSE}
+chart <- leaflet::leaflet(subset(data, !is_note & (is_add | is_delete))) %>%
+    addTiles(urlTemplate='https://tileservice.charts.noaa.gov/tiles/50000_1/{z}/{x}/{y}.png') %>%
+    addMarkers(
+        icon=~icons(sprintf('icons/big_blue_%s_31x31.png',
+                            ifelse(action == 'add', 'circle', 'x')),
+                    iconWidth=31, iconHeight=31,
+                    iconAnchorX=16, iconAnchorY=16, popupAnchorX=23, popupAnchorY=16,
+                    className=~sprintf('marker_%s_%s', action, effective)),
+        lat=~lat, lng=~lng,
+        label=~sprintf('%s: %s %s %s', effective, action, item, label)
+    )
+
+chart   # %>% addControl(html, position='topright')
+```
+```{r asis=TRUE, echo=FALSE}
+html <- ("
+<div class='legend' style='float: right'>
+<table>
+<tr><td><img src='icons/small_blue_x_31x31.png'></td><td>future deletion</td></tr>
+<tr><td><img src='icons/small_blue_circle_31x31.png'></td><td>future addition</td></tr>
+<tr><td><img src='icons/big_green_x_31x31.png'></td><td>this-week deletion</td></tr>
+<tr><td><img src='icons/big_green_circle_31x31.png'></td><td>this-week addition</td></tr>
+<tr><td><img src='icons/big_blue_x_31x31.png'></td><td>past deletion</td></tr>
+<tr><td><img src='icons/big_blue_circle_31x31.png'></td><td>past addition</td></tr>
+</table>
+</div>
+<script>
+window.onload = set_leaflet_float()
+</script>
+")
+knitr::asis_output(htmltools::htmlPreserve(html))
+```
+
+
+```{r asis=TRUE, echo=FALSE}
+library(printr)
+knitr::kable(data[,c(9,2:7)], digits = 4, caption = "Raw data for finding map age:")
+```
+
+# Running
+
+If you want to run this yourself, perhaps with newer data or
+a different location, go for it.
+
+You'll need to run the python "get_lnms.py" script to get new
+LNM data.
+
+Then run the R markdown for this readme file.
+
+# License
+
+Released under the BSD license.
